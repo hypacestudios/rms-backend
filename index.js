@@ -2,6 +2,7 @@ require("dotenv").config();
 
 const express = require("express");
 const { createClient } = require("@supabase/supabase-js");
+const axios = require("axios");
 
 const app = express();
 app.use(express.json());
@@ -11,12 +12,35 @@ const supabase = createClient(
   process.env.SUPABASE_KEY
 );
 
-// health check route
+
+// HEALTH CHECK
 app.get("/", (req, res) => {
   res.send("RMS Backend Running");
 });
 
-// insert customer route
+
+// SEND WHATSAPP MESSAGE FUNCTION
+async function sendWhatsAppMessage(to, message) {
+  const url = `https://api.twilio.com/2010-04-01/Accounts/${process.env.TWILIO_ACCOUNT_SID}/Messages.json`;
+
+  return axios.post(
+    url,
+    new URLSearchParams({
+      From: process.env.TWILIO_WHATSAPP_NUMBER,
+      To: `whatsapp:${to}`,
+      Body: message
+    }),
+    {
+      auth: {
+        username: process.env.TWILIO_ACCOUNT_SID,
+        password: process.env.TWILIO_AUTH_TOKEN
+      }
+    }
+  );
+}
+
+
+// CREATE CUSTOMER + SEND MESSAGE
 app.post("/new-customer", async (req, res) => {
   try {
     const { name, phone, client_id } = req.body;
@@ -29,6 +53,12 @@ app.post("/new-customer", async (req, res) => {
 
     if (error) throw error;
 
+    // send first rating message
+    await sendWhatsAppMessage(
+      phone,
+      "Hi! Thank you for visiting us. Please rate your experience from 1 to 5."
+    );
+
     res.json({
       success: true,
       customer: data
@@ -37,11 +67,11 @@ app.post("/new-customer", async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({
-      success: false,
-      message: "Insert failed"
+      success: false
     });
   }
 });
+
 
 const PORT = process.env.PORT || 3000;
 
