@@ -8,13 +8,16 @@ app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
 /*
-ENV VARIABLES
+SUPABASE CLIENT
 */
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
+/*
+TWILIO CLIENT
+*/
 const twilioClient = twilio(
   process.env.TWILIO_ACCOUNT_SID,
   process.env.TWILIO_AUTH_TOKEN
@@ -30,9 +33,10 @@ app.get("/", (req, res) => {
 
 /*
 START REVIEW FLOW
-Send rating request to customer
+Creates customer session + sends rating request
 */
 app.post("/start-review", async (req, res) => {
+
   try {
 
     const { name, phone, client_id } = req.body;
@@ -43,8 +47,10 @@ app.post("/start-review", async (req, res) => {
       });
     }
 
+    console.log("Creating customer:", { name, phone, client_id });
+
     /*
-    SAVE CUSTOMER ENTRY
+    INSERT CUSTOMER SESSION
     */
     const { data: customer, error } = await supabase
       .from("customers")
@@ -59,9 +65,14 @@ app.post("/start-review", async (req, res) => {
       .single();
 
     if (error) {
-      console.log(error);
-      return res.status(500).json({ error: "Customer insert failed" });
+      console.log("Insert error:", error);
+      return res.status(500).json({
+        error: "Customer insert failed",
+        details: error.message
+      });
     }
+
+    console.log("Customer created:", customer.id);
 
 
     /*
@@ -75,23 +86,24 @@ app.post("/start-review", async (req, res) => {
 
     res.json({
       success: true,
-      message: "Review request sent"
+      customer
     });
 
   } catch (err) {
 
-    console.log(err);
+    console.log("Start review error:", err);
 
     res.status(500).json({
       error: "Internal server error"
     });
   }
+
 });
 
 
 /*
-INCOMING WHATSAPP MESSAGE HANDLER
-Handles replies 1–5
+INCOMING MESSAGE WEBHOOK
+Handles rating replies
 */
 app.post("/incoming-message", async (req, res) => {
 
@@ -101,7 +113,8 @@ app.post("/incoming-message", async (req, res) => {
 
     const incomingText = req.body.Body?.trim();
 
-    const senderPhone = req.body.From.replace("whatsapp:", "");
+    const senderPhone = req.body.From; 
+    // IMPORTANT: keep whatsapp:+ format
 
     if (!incomingText || !senderPhone) {
       return res.send("OK");
@@ -109,7 +122,7 @@ app.post("/incoming-message", async (req, res) => {
 
 
     /*
-    DETECT RATING
+    EXTRACT RATING
     */
     const ratingMatch = incomingText.match(/[1-5]/);
 
@@ -123,7 +136,7 @@ app.post("/incoming-message", async (req, res) => {
 
 
     /*
-    GET LATEST CUSTOMER SESSION
+    FIND LATEST CUSTOMER SESSION
     */
     const { data: customer } = await supabase
       .from("customers")
@@ -133,7 +146,6 @@ app.post("/incoming-message", async (req, res) => {
       .limit(1)
       .maybeSingle();
 
-
     if (!customer) {
       console.log("Customer not found");
       return res.send("OK");
@@ -141,7 +153,7 @@ app.post("/incoming-message", async (req, res) => {
 
 
     /*
-    SAVE RATING
+    STORE RATING
     */
     await supabase
       .from("customers")
@@ -165,13 +177,13 @@ app.post("/incoming-message", async (req, res) => {
 
 
     /*
-    RMS FLOW LOGIC
+    RMS LOGIC
     */
     if (rating <= 3) {
 
       await twilioClient.messages.create({
         from: process.env.TWILIO_WHATSAPP_NUMBER,
-        to: `whatsapp:${senderPhone}`,
+        to: senderPhone,
         body:
           "We're sorry your experience wasn't perfect. Please tell us what went wrong so we can fix it."
       });
@@ -182,7 +194,7 @@ app.post("/incoming-message", async (req, res) => {
 
       await twilioClient.messages.create({
         from: process.env.TWILIO_WHATSAPP_NUMBER,
-        to: `whatsapp:${senderPhone}`,
+        to: senderPhone,
         body:
           `Thank you for your feedback! We'd really appreciate a Google review ⭐\n\n${client.review_link}`
       });
