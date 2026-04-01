@@ -19,9 +19,16 @@ TWILIO_AUTH_TOKEN
 TWILIO_WHATSAPP_NUMBER
 */
 
+import fetch from "node-fetch";
+
 const supabase = createClient(
   process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY
+  process.env.SUPABASE_SERVICE_ROLE_KEY,
+  {
+    global: {
+      fetch: fetch
+    }
+  }
 );
 
 const twilioClient = twilio(
