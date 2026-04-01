@@ -1,64 +1,118 @@
 require("dotenv").config();
 
 const express = require("express");
-const { createClient } = require("@supabase/supabase-js");
 const axios = require("axios");
+const { createClient } = require("@supabase/supabase-js");
 
 const app = express();
 app.use(express.json());
 
+/*
+==============================
+SUPABASE CONNECTION
+==============================
+*/
 
-// CONNECT SUPABASE
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_KEY
 );
 
 
-// HEALTH CHECK ROUTE
+/*
+==============================
+HEALTH CHECK ROUTE
+==============================
+*/
+
 app.get("/", (req, res) => {
   res.send("RMS Backend Running");
 });
 
 
-// SEND WHATSAPP MESSAGE FUNCTION
-async function sendWhatsAppMessage(to, message) {
-  const url = `https://api.twilio.com/2010-04-01/Accounts/${process.env.TWILIO_ACCOUNT_SID}/Messages.json`;
+/*
+==============================
+SEND WHATSAPP MESSAGE FUNCTION
+(TWILIO SANDBOX COMPATIBLE)
+==============================
+*/
 
-  return axios.post(
-    url,
-    new URLSearchParams({
-      From: process.env.TWILIO_WHATSAPP_NUMBER,
-      To: to,
-      Body: message
-    }),
-    {
-      auth: {
-        username: process.env.TWILIO_ACCOUNT_SID,
-        password: process.env.TWILIO_AUTH_TOKEN
+async function sendWhatsAppMessage(to, message) {
+  try {
+
+    const response = await axios.post(
+      `https://api.twilio.com/2010-04-01/Accounts/${process.env.TWILIO_ACCOUNT_SID}/Messages.json`,
+      new URLSearchParams({
+        From: process.env.TWILIO_WHATSAPP_NUMBER,
+        To: to,
+        Body: message
+      }),
+      {
+        auth: {
+          username: process.env.TWILIO_ACCOUNT_SID,
+          password: process.env.TWILIO_AUTH_TOKEN
+        }
       }
-    }
-  );
+    );
+
+    return response.data;
+
+  } catch (error) {
+
+    console.log(
+      "TWILIO ERROR:",
+      error.response?.data || error.message
+    );
+
+    throw error;
+  }
 }
 
 
-// CREATE CUSTOMER + SEND FIRST MESSAGE
+/*
+==============================
+CREATE CUSTOMER + SEND REVIEW MESSAGE
+==============================
+*/
+
 app.post("/new-customer", async (req, res) => {
   try {
 
-    const { name, phone, client_id } = req.body;
+    let { name, phone, client_id } = req.body;
 
-    // INSERT INTO DATABASE
+    if (!client_id) {
+      throw new Error("client_id missing");
+    }
+
+    // Clean UUID input
+    client_id = client_id.trim();
+
+    /*
+    INSERT CUSTOMER INTO DATABASE
+    */
+
     const { data, error } = await supabase
       .from("customers")
-      .insert([{ name, phone, client_id }])
+      .insert([
+        {
+          name,
+          phone,
+          client_id
+        }
+      ])
       .select()
       .single();
 
-    if (error) throw error;
+    if (error) {
+      console.log("SUPABASE ERROR:", error);
+      throw error;
+    }
 
 
-    // SEND WHATSAPP MESSAGE
+    /*
+    SEND FIRST REVIEW MESSAGE
+    */
+
     await sendWhatsAppMessage(
       phone,
       "Hi! Thank you for visiting us. Please rate your experience from 1 to 5."
@@ -72,7 +126,10 @@ app.post("/new-customer", async (req, res) => {
 
   } catch (err) {
 
-    console.log("ERROR:", err.response?.data || err.message);
+    console.log(
+      "SERVER ERROR:",
+      err.response?.data || err.message
+    );
 
     res.status(500).json({
       success: false
@@ -81,6 +138,12 @@ app.post("/new-customer", async (req, res) => {
   }
 });
 
+
+/*
+==============================
+SERVER START
+==============================
+*/
 
 const PORT = process.env.PORT || 3000;
 
