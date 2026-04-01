@@ -1,27 +1,23 @@
 import express from "express";
 import { createClient } from "@supabase/supabase-js";
 import twilio from "twilio";
-import { validate as isUUID } from "uuid";
+import dotenv from "dotenv";
+
+dotenv.config();
 
 const app = express();
 
-/*
-IMPORTANT: Twilio sends webhook as form-urlencoded
-*/
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
 /*
-INIT SUPABASE
+ENV VARIABLES
 */
 const supabase = createClient(
   process.env.SUPABASE_URL,
-  process.env.SUPABASE_KEY
+  process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-/*
-INIT TWILIO
-*/
 const twilioClient = twilio(
   process.env.TWILIO_ACCOUNT_SID,
   process.env.TWILIO_AUTH_TOKEN
@@ -31,39 +27,34 @@ const twilioClient = twilio(
 HEALTH CHECK
 */
 app.get("/", (req, res) => {
-  res.send("RMS Backend Running");
+  res.send("RMS Backend Running 🚀");
 });
+
 
 /*
 START REVIEW FLOW
-Creates customer + sends rating request
+Send rating request to customer
 */
 app.post("/start-review", async (req, res) => {
   try {
+
     const { name, phone, client_id } = req.body;
 
-    console.log("Start review payload:", req.body);
-
-    if (!isUUID(client_id)) {
+    if (!name || !phone || !client_id) {
       return res.status(400).json({
-        error: "Invalid client_id UUID"
+        error: "Missing required fields"
       });
     }
 
     /*
-    NORMALIZE PHONE
+    SAVE CUSTOMER ENTRY
     */
-    const cleanPhone = phone.replace("whatsapp:", "");
-
-    /*
-    INSERT CUSTOMER
-    */
-    const { data, error } = await supabase
+    const { data: customer, error } = await supabase
       .from("customers")
       .insert([
         {
           name,
-          phone: cleanPhone,
+          phone,
           client_id
         }
       ])
@@ -71,50 +62,57 @@ app.post("/start-review", async (req, res) => {
       .single();
 
     if (error) {
-      console.log("Supabase insert error:", error);
-      return res.status(500).json(error);
+      console.log(error);
+      return res.status(500).json({ error: "Customer insert failed" });
     }
 
+
     /*
-    SEND RATING MESSAGE
+    SEND WHATSAPP MESSAGE
     */
     await twilioClient.messages.create({
       from: process.env.TWILIO_WHATSAPP_NUMBER,
-      to: `whatsapp:${cleanPhone}`,
-      body: "Hi! Please rate your experience from 1⭐ to 5⭐."
+      to: phone,
+      body: "Hi! Please rate your experience from 1 ⭐ to 5 ⭐"
     });
 
-    return res.json({
+    res.json({
       success: true,
-      customer: data
+      message: "Review request sent"
     });
 
   } catch (err) {
-    console.log("Server error:", err);
 
-    return res.status(500).json({
+    console.log(err);
+
+    res.status(500).json({
       error: "Internal server error"
     });
   }
 });
 
+
 /*
-INCOMING WHATSAPP REPLIES
-CORE RMS ROUTING ENGINE
+INCOMING WHATSAPP MESSAGE HANDLER
+Handles replies 1–5
 */
 app.post("/incoming-message", async (req, res) => {
+
   try {
+
     console.log("Webhook received:", req.body);
 
     const incomingText = req.body.Body?.trim();
+
     const senderPhone = req.body.From.replace("whatsapp:", "");
 
     if (!incomingText || !senderPhone) {
       return res.send("OK");
     }
 
+
     /*
-    EXTRACT RATING
+    DETECT RATING
     */
     const ratingMatch = incomingText.match(/[1-5]/);
 
@@ -126,22 +124,27 @@ app.post("/incoming-message", async (req, res) => {
 
     console.log("Rating detected:", rating);
 
+
     /*
-    FIND CUSTOMER
+    GET LATEST CUSTOMER SESSION
     */
-    const { data: customer, error } = await supabase
+    const { data: customer } = await supabase
       .from("customers")
       .select("*")
       .eq("phone", senderPhone)
-      .single();
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
 
-    if (error || !customer) {
+
+    if (!customer) {
       console.log("Customer not found");
       return res.send("OK");
     }
 
+
     /*
-    STORE RATING
+    SAVE RATING
     */
     await supabase
       .from("customers")
@@ -153,8 +156,9 @@ app.post("/incoming-message", async (req, res) => {
 
     console.log("Rating saved");
 
+
     /*
-    FETCH CLIENT REVIEW LINK
+    GET CLIENT REVIEW LINK
     */
     const { data: client } = await supabase
       .from("clients")
@@ -162,12 +166,10 @@ app.post("/incoming-message", async (req, res) => {
       .eq("id", customer.client_id)
       .single();
 
-    /*
-    FINAL RMS LOGIC
-    1–3 = complaint flow
-    4–5 = public review push
-    */
 
+    /*
+    RMS FLOW LOGIC
+    */
     if (rating <= 3) {
 
       await twilioClient.messages.create({
@@ -188,23 +190,28 @@ app.post("/incoming-message", async (req, res) => {
           `Thank you for your feedback! We'd really appreciate a Google review ⭐\n\n${client.review_link}`
       });
 
-      console.log("Public review flow triggered");
+      console.log("Review link sent");
 
     }
 
     res.send("Reply processed");
 
   } catch (err) {
+
     console.log("Webhook error:", err);
+
     res.status(500).send("Webhook error");
+
   }
+
 });
 
+
 /*
-START SERVER
+SERVER START
 */
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
-  console.log("Server running on port", PORT);
+  console.log(`Server running on port ${PORT} 🚀`);
 });
