@@ -5,6 +5,10 @@ import { validate as isUUID } from "uuid";
 
 const app = express();
 
+/*
+IMPORTANT: Twilio webhook parser
+*/
+app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
 /*
