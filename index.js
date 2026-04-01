@@ -1,3 +1,5 @@
+console.log("SUPABASE KEY PRESENT:", !!process.env.SUPABASE_SERVICE_ROLE_KEY);
+
 import express from "express";
 import { createClient } from "@supabase/supabase-js";
 import twilio from "twilio";
