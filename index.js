@@ -8,20 +8,25 @@ app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
 /*
-SUPABASE CLIENT
+ENV VARIABLES REQUIRED IN RAILWAY
+--------------------------------
+SUPABASE_URL
+SUPABASE_SERVICE_ROLE_KEY
+TWILIO_ACCOUNT_SID
+TWILIO_AUTH_TOKEN
+TWILIO_WHATSAPP_NUMBER
 */
+
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-/*
-TWILIO CLIENT
-*/
 const twilioClient = twilio(
   process.env.TWILIO_ACCOUNT_SID,
   process.env.TWILIO_AUTH_TOKEN
 );
+
 
 /*
 HEALTH CHECK
@@ -33,7 +38,7 @@ app.get("/", (req, res) => {
 
 /*
 START REVIEW FLOW
-Creates customer session + sends rating request
+Creates session + sends rating message
 */
 app.post("/start-review", async (req, res) => {
 
@@ -54,18 +59,14 @@ app.post("/start-review", async (req, res) => {
     */
     const { data: customer, error } = await supabase
       .from("customers")
-      .insert([
-        {
-          name,
-          phone,
-          client_id
-        }
-      ])
+      .insert([{ name, phone, client_id }])
       .select()
       .single();
 
     if (error) {
-      console.log("Insert error:", error);
+
+      console.log("Supabase insert error:", error);
+
       return res.status(500).json({
         error: "Customer insert failed",
         details: error.message
@@ -78,11 +79,24 @@ app.post("/start-review", async (req, res) => {
     /*
     SEND WHATSAPP MESSAGE
     */
-    await twilioClient.messages.create({
-      from: process.env.TWILIO_WHATSAPP_NUMBER,
-      to: phone,
-      body: "Hi! Please rate your experience from 1 ⭐ to 5 ⭐"
-    });
+    try {
+
+      await twilioClient.messages.create({
+        from: process.env.TWILIO_WHATSAPP_NUMBER,
+        to: phone,
+        body: "Hi! Please rate your experience from 1 ⭐ to 5 ⭐"
+      });
+
+    } catch (twilioError) {
+
+      console.log("Twilio send error:", twilioError);
+
+      return res.status(500).json({
+        error: "Customer saved but WhatsApp send failed",
+        details: twilioError.message
+      });
+
+    }
 
     res.json({
       success: true,
@@ -91,19 +105,20 @@ app.post("/start-review", async (req, res) => {
 
   } catch (err) {
 
-    console.log("Start review error:", err);
+    console.log("Unexpected start-review error:", err);
 
     res.status(500).json({
       error: "Internal server error"
     });
+
   }
 
 });
 
 
 /*
-INCOMING MESSAGE WEBHOOK
-Handles rating replies
+INCOMING WHATSAPP REPLY WEBHOOK
+Handles rating responses
 */
 app.post("/incoming-message", async (req, res) => {
 
@@ -112,9 +127,8 @@ app.post("/incoming-message", async (req, res) => {
     console.log("Webhook received:", req.body);
 
     const incomingText = req.body.Body?.trim();
-
     const senderPhone = req.body.From; 
-    // IMPORTANT: keep whatsapp:+ format
+    // IMPORTANT: keep whatsapp:+ format exactly
 
     if (!incomingText || !senderPhone) {
       return res.send("OK");
@@ -136,7 +150,7 @@ app.post("/incoming-message", async (req, res) => {
 
 
     /*
-    FIND LATEST CUSTOMER SESSION
+    FIND MOST RECENT SESSION
     */
     const { data: customer } = await supabase
       .from("customers")
@@ -147,15 +161,17 @@ app.post("/incoming-message", async (req, res) => {
       .maybeSingle();
 
     if (!customer) {
-      console.log("Customer not found");
+
+      console.log("Customer not found for:", senderPhone);
+
       return res.send("OK");
     }
 
 
     /*
-    STORE RATING
+    SAVE RATING
     */
-    await supabase
+    const { error: updateError } = await supabase
       .from("customers")
       .update({
         rating,
@@ -163,11 +179,18 @@ app.post("/incoming-message", async (req, res) => {
       })
       .eq("id", customer.id);
 
-    console.log("Rating saved");
+    if (updateError) {
+
+      console.log("Rating update error:", updateError);
+
+      return res.send("OK");
+    }
+
+    console.log("Rating stored");
 
 
     /*
-    GET CLIENT REVIEW LINK
+    GET REVIEW LINK
     */
     const { data: client } = await supabase
       .from("clients")
@@ -177,7 +200,7 @@ app.post("/incoming-message", async (req, res) => {
 
 
     /*
-    RMS LOGIC
+    RMS RESPONSE LOGIC
     */
     if (rating <= 3) {
 
@@ -188,7 +211,7 @@ app.post("/incoming-message", async (req, res) => {
           "We're sorry your experience wasn't perfect. Please tell us what went wrong so we can fix it."
       });
 
-      console.log("Complaint flow triggered");
+      console.log("Complaint flow sent");
 
     } else {
 
