@@ -7,13 +7,15 @@ const axios = require("axios");
 const app = express();
 app.use(express.json());
 
+
+// CONNECT SUPABASE
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_KEY
 );
 
 
-// HEALTH CHECK
+// HEALTH CHECK ROUTE
 app.get("/", (req, res) => {
   res.send("RMS Backend Running");
 });
@@ -27,7 +29,7 @@ async function sendWhatsAppMessage(to, message) {
     url,
     new URLSearchParams({
       From: process.env.TWILIO_WHATSAPP_NUMBER,
-      To: `whatsapp:${to}`,
+      To: to,
       Body: message
     }),
     {
@@ -40,11 +42,13 @@ async function sendWhatsAppMessage(to, message) {
 }
 
 
-// CREATE CUSTOMER + SEND MESSAGE
+// CREATE CUSTOMER + SEND FIRST MESSAGE
 app.post("/new-customer", async (req, res) => {
   try {
+
     const { name, phone, client_id } = req.body;
 
+    // INSERT INTO DATABASE
     const { data, error } = await supabase
       .from("customers")
       .insert([{ name, phone, client_id }])
@@ -53,11 +57,13 @@ app.post("/new-customer", async (req, res) => {
 
     if (error) throw error;
 
-    // send first rating message
+
+    // SEND WHATSAPP MESSAGE
     await sendWhatsAppMessage(
       phone,
       "Hi! Thank you for visiting us. Please rate your experience from 1 to 5."
     );
+
 
     res.json({
       success: true,
@@ -65,10 +71,13 @@ app.post("/new-customer", async (req, res) => {
     });
 
   } catch (err) {
-    console.error(err);
+
+    console.log("ERROR:", err.response?.data || err.message);
+
     res.status(500).json({
       success: false
     });
+
   }
 });
 
