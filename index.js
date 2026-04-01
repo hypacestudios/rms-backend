@@ -21,7 +21,7 @@ const supabase = createClient(
 
 /*
 ==============================
-HEALTH CHECK ROUTE
+HEALTH CHECK
 ==============================
 */
 
@@ -32,12 +32,12 @@ app.get("/", (req, res) => {
 
 /*
 ==============================
-SEND WHATSAPP MESSAGE FUNCTION
-(TWILIO SANDBOX COMPATIBLE)
+SEND WHATSAPP MESSAGE
 ==============================
 */
 
 async function sendWhatsAppMessage(to, message) {
+
   try {
 
     const response = await axios.post(
@@ -55,7 +55,7 @@ async function sendWhatsAppMessage(to, message) {
       }
     );
 
-    return response.data;
+    console.log("WHATSAPP SENT:", response.data.sid);
 
   } catch (error) {
 
@@ -71,46 +71,72 @@ async function sendWhatsAppMessage(to, message) {
 
 /*
 ==============================
-CREATE CUSTOMER + SEND REVIEW MESSAGE
+CREATE CUSTOMER ROUTE
 ==============================
 */
 
 app.post("/new-customer", async (req, res) => {
+
   try {
 
     let { name, phone, client_id } = req.body;
 
-    if (!client_id) {
-      throw new Error("client_id missing");
-    }
+    console.log("REQUEST BODY:", req.body);
 
-    // Clean UUID input
-    client_id = client_id.trim();
 
     /*
-    INSERT CUSTOMER INTO DATABASE
+    STEP 1: VALIDATE CLIENT EXISTS
     */
 
-    const { data, error } = await supabase
-      .from("customers")
-      .insert([
-        {
-          name,
-          phone,
-          client_id
-        }
-      ])
-      .select()
-      .single();
+    const { data: clientExists, error: clientError } =
+      await supabase
+        .from("clients")
+        .select("id")
+        .eq("id", client_id)
+        .single();
 
-    if (error) {
-      console.log("SUPABASE ERROR:", error);
-      throw error;
+    if (clientError || !clientExists) {
+
+      console.log("CLIENT VALIDATION FAILED:", clientError);
+
+      return res.status(400).json({
+        success: false,
+        message: "Invalid client_id"
+      });
     }
 
 
     /*
-    SEND FIRST REVIEW MESSAGE
+    STEP 2: INSERT CUSTOMER
+    */
+
+    const { data, error } =
+      await supabase
+        .from("customers")
+        .insert([
+          {
+            name,
+            phone,
+            client_id
+          }
+        ])
+        .select()
+        .single();
+
+
+    if (error) {
+
+      console.log("SUPABASE INSERT ERROR:", error);
+
+      return res.status(500).json({
+        success: false,
+        error
+      });
+    }
+
+
+    /*
+    STEP 3: SEND WHATSAPP MESSAGE
     */
 
     await sendWhatsAppMessage(
@@ -119,23 +145,23 @@ app.post("/new-customer", async (req, res) => {
     );
 
 
-    res.json({
+    return res.json({
       success: true,
       customer: data
     });
 
-  } catch (err) {
+  }
 
-    console.log(
-      "SERVER ERROR:",
-      err.response?.data || err.message
-    );
+  catch (err) {
 
-    res.status(500).json({
+    console.log("SERVER ERROR:", err);
+
+    return res.status(500).json({
       success: false
     });
 
   }
+
 });
 
 
