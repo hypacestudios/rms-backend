@@ -1,17 +1,11 @@
 import express from "express";
-import pkg from "@supabase/supabase-js";
+import { createClient } from "@supabase/supabase-js";
 import twilio from "twilio";
 import { validate as isUUID } from "uuid";
 
-const { createClient } = pkg;
-
 const app = express();
 
-/*
-CRITICAL FIX:
-force JSON parsing explicitly
-*/
-app.use(express.json({ strict: true }));
+app.use(express.json());
 
 /*
 ENV VARIABLES
@@ -34,22 +28,16 @@ app.get("/", (req, res) => {
 });
 
 /*
-CREATE CUSTOMER
+START REVIEW FLOW
 */
-app.post("/new-customer", async (req, res) => {
+app.post("/start-review", async (req, res) => {
   try {
     console.log("Incoming payload:", req.body);
 
     let { name, phone, client_id } = req.body;
 
-    /*
-    CLEAN INPUT
-    */
     client_id = String(client_id).trim();
 
-    /*
-    VALIDATE UUID FORMAT
-    */
     if (!isUUID(client_id)) {
       return res.status(400).json({
         error: "Invalid UUID format",
@@ -57,9 +45,6 @@ app.post("/new-customer", async (req, res) => {
       });
     }
 
-    /*
-    INSERT CUSTOMER
-    */
     const { data, error } = await supabase
       .from("customers")
       .insert([
@@ -77,14 +62,10 @@ app.post("/new-customer", async (req, res) => {
       return res.status(500).json(error);
     }
 
-    /*
-    SEND WHATSAPP MESSAGE
-    */
     await client.messages.create({
       from: process.env.TWILIO_WHATSAPP_NUMBER,
       to: phone,
-      body:
-        "Hi! We'd love your feedback.\nPlease rate us:\n1⭐ 2⭐ 3⭐ 4⭐ 5⭐"
+      body: "Hi! We'd love your feedback.\nPlease rate us from 1⭐ to 5⭐."
     });
 
     return res.json({
@@ -94,6 +75,7 @@ app.post("/new-customer", async (req, res) => {
 
   } catch (err) {
     console.error("Server error:", err);
+
     return res.status(500).json({
       error: "Internal server error",
       details: err.message
@@ -102,7 +84,7 @@ app.post("/new-customer", async (req, res) => {
 });
 
 /*
-START SERVER
+SERVER START
 */
 const PORT = process.env.PORT || 3000;
 
