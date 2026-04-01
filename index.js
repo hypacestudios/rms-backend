@@ -5,7 +5,7 @@ import twilio from "twilio";
 const app = express();
 
 /*
-Twilio webhook parser
+BODY PARSERS (REQUIRED FOR TWILIO WEBHOOK)
 */
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
@@ -22,12 +22,10 @@ const {
 } = process.env;
 
 /*
-VERIFY ENV LOADED
+VERIFY ENV VARIABLES EXIST
 */
-console.log(
-  "SUPABASE KEY PRESENT:",
-  !!SUPABASE_SERVICE_ROLE_KEY
-);
+console.log("SUPABASE KEY PRESENT:", !!SUPABASE_SERVICE_ROLE_KEY);
+console.log("SUPABASE URL:", SUPABASE_URL);
 
 /*
 SUPABASE CLIENT
@@ -54,10 +52,46 @@ app.get("/", (req, res) => {
 
 
 /*
+SUPABASE DEBUG ROUTE
+VERY IMPORTANT — tells us if Railway can reach Supabase
+*/
+app.get("/debug-supabase", async (req, res) => {
+  try {
+
+    const { data, error } = await supabase
+      .from("clients")
+      .select("*")
+      .limit(1);
+
+    if (error) {
+      return res.json({
+        status: "supabase_error",
+        error
+      });
+    }
+
+    res.json({
+      status: "success",
+      data
+    });
+
+  } catch (err) {
+
+    res.json({
+      status: "network_failure",
+      error: err.message
+    });
+
+  }
+});
+
+
+/*
 START REVIEW FLOW
-Creates customer → sends rating request
+Creates customer and sends rating request
 */
 app.post("/start-review", async (req, res) => {
+
   try {
 
     const { name, phone, client_id } = req.body;
@@ -70,7 +104,7 @@ app.post("/start-review", async (req, res) => {
 
     /*
     INSERT CUSTOMER
-    IMPORTANT: column name = phone_number
+    IMPORTANT COLUMN NAME: phone_number
     */
     const { data: customer, error } = await supabase
       .from("customers")
@@ -85,7 +119,9 @@ app.post("/start-review", async (req, res) => {
       .single();
 
     if (error) {
+
       console.log("SUPABASE INSERT ERROR:", error);
+
       return res.status(500).json({
         error: "Customer insert failed",
         details: error.message
@@ -113,10 +149,12 @@ app.post("/start-review", async (req, res) => {
     console.log("START REVIEW ERROR:", err);
 
     res.status(500).json({
-      error: "Internal server error"
+      error: "Internal server error",
+      details: err.message
     });
 
   }
+
 });
 
 
@@ -133,15 +171,19 @@ app.post("/whatsapp-webhook", async (req, res) => {
     const incomingMsg = req.body.Body?.trim();
     const from = req.body.From;
 
+    if (!incomingMsg) {
+      return res.sendStatus(200);
+    }
+
     /*
-    CHECK IF RATING
+    CHECK IF MESSAGE IS RATING
     */
     if (["1", "2", "3", "4", "5"].includes(incomingMsg)) {
 
       console.log("Rating detected:", incomingMsg);
 
       /*
-      FIND CUSTOMER
+      FIND CUSTOMER BY PHONE
       */
       const { data: customer, error } = await supabase
         .from("customers")
@@ -210,6 +252,7 @@ app.post("/whatsapp-webhook", async (req, res) => {
 
     res.sendStatus(200);
   }
+
 });
 
 
