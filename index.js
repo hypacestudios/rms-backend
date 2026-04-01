@@ -61,7 +61,7 @@ app.post("/start-review", async (req, res) => {
     */
     const { data: customer, error } = await supabase
       .from("customers")
-      .insert([{ name, phone, client_id }])
+      .insert([{ name, phone_number: phone, client_id }])
       .select()
       .single();
 
