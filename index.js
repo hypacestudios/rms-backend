@@ -6,7 +6,7 @@ import { validate as isUUID } from "uuid";
 const app = express();
 
 /*
-IMPORTANT: Twilio sends webhook as urlencoded
+IMPORTANT: Twilio webhook parser
 */
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
@@ -31,7 +31,7 @@ const twilioClient = twilio(
 
 
 /*
-HEALTH CHECK
+HEALTH CHECK ROUTE
 */
 app.get("/", (req, res) => {
   res.send("RMS Backend Running");
@@ -40,7 +40,7 @@ app.get("/", (req, res) => {
 
 /*
 START REVIEW FLOW
-Sends first WhatsApp message
+Creates customer + sends rating request
 */
 app.post("/start-review", async (req, res) => {
 
@@ -57,11 +57,23 @@ app.post("/start-review", async (req, res) => {
     }
 
     /*
+    NORMALIZE PHONE BEFORE SAVING
+    remove whatsapp: prefix if present
+    */
+    const cleanPhone = phone.replace("whatsapp:", "");
+
+    /*
     INSERT CUSTOMER
     */
     const { data, error } = await supabase
       .from("customers")
-      .insert([{ name, phone, client_id }])
+      .insert([
+        {
+          name,
+          phone: cleanPhone,
+          client_id
+        }
+      ])
       .select()
       .single();
 
@@ -75,7 +87,7 @@ app.post("/start-review", async (req, res) => {
     */
     await twilioClient.messages.create({
       from: process.env.TWILIO_WHATSAPP_NUMBER,
-      to: phone,
+      to: `whatsapp:${cleanPhone}`,
       body: "Hi! Please rate your experience from 1⭐ to 5⭐."
     });
 
@@ -98,8 +110,7 @@ app.post("/start-review", async (req, res) => {
 
 
 /*
-INCOMING WHATSAPP REPLIES
-TWILIO WEBHOOK HANDLER
+INCOMING WHATSAPP REPLIES WEBHOOK
 */
 app.post("/incoming-message", async (req, res) => {
 
@@ -108,7 +119,11 @@ app.post("/incoming-message", async (req, res) => {
     console.log("Webhook received:", req.body);
 
     const incomingText = req.body.Body?.trim();
-    const senderPhone = req.body.From;
+
+    /*
+    REMOVE whatsapp: prefix
+    */
+    const senderPhone = req.body.From.replace("whatsapp:", "");
 
     if (!incomingText || !senderPhone) {
       return res.send("OK");
@@ -127,6 +142,7 @@ app.post("/incoming-message", async (req, res) => {
 
     console.log("Rating detected:", rating);
 
+
     /*
     FIND CUSTOMER
     */
@@ -144,6 +160,7 @@ app.post("/incoming-message", async (req, res) => {
 
     }
 
+
     /*
     STORE RATING
     */
@@ -159,13 +176,13 @@ app.post("/incoming-message", async (req, res) => {
 
 
     /*
-    ROUTE RESPONSE BASED ON SENTIMENT
+    POSITIVE vs NEGATIVE FLOW
     */
     if (rating >= 4) {
 
       await twilioClient.messages.create({
         from: process.env.TWILIO_WHATSAPP_NUMBER,
-        to: senderPhone,
+        to: `whatsapp:${senderPhone}`,
         body:
           "Thank you! Would you mind sharing this on Google?\n\n👉 https://g.page/r/YOUR_LINK/review"
       });
@@ -176,7 +193,7 @@ app.post("/incoming-message", async (req, res) => {
 
       await twilioClient.messages.create({
         from: process.env.TWILIO_WHATSAPP_NUMBER,
-        to: senderPhone,
+        to: `whatsapp:${senderPhone}`,
         body:
           "We're sorry your experience wasn't perfect. Please tell us what went wrong so we can improve."
       });
