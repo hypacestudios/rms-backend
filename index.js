@@ -1,178 +1,111 @@
-require("dotenv").config();
+import express from "express";
+import pkg from "@supabase/supabase-js";
+import twilio from "twilio";
+import { validate as isUUID } from "uuid";
 
-const express = require("express");
-const axios = require("axios");
-const { createClient } = require("@supabase/supabase-js");
+const { createClient } = pkg;
 
 const app = express();
-app.use(express.json());
 
 /*
-==============================
-SUPABASE CONNECTION
-==============================
+CRITICAL FIX:
+force JSON parsing explicitly
 */
+app.use(express.json({ strict: true }));
 
+/*
+ENV VARIABLES
+*/
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_KEY
 );
 
+const client = twilio(
+  process.env.TWILIO_ACCOUNT_SID,
+  process.env.TWILIO_AUTH_TOKEN
+);
 
 /*
-==============================
 HEALTH CHECK
-==============================
 */
-
 app.get("/", (req, res) => {
   res.send("RMS Backend Running");
 });
 
-
 /*
-==============================
-SEND WHATSAPP MESSAGE
-==============================
+CREATE CUSTOMER
 */
-
-async function sendWhatsAppMessage(to, message) {
-
-  try {
-
-    const response = await axios.post(
-      `https://api.twilio.com/2010-04-01/Accounts/${process.env.TWILIO_ACCOUNT_SID}/Messages.json`,
-      new URLSearchParams({
-        From: process.env.TWILIO_WHATSAPP_NUMBER,
-        To: to,
-        Body: message
-      }),
-      {
-        auth: {
-          username: process.env.TWILIO_ACCOUNT_SID,
-          password: process.env.TWILIO_AUTH_TOKEN
-        }
-      }
-    );
-
-    console.log("WHATSAPP SENT:", response.data.sid);
-
-  } catch (error) {
-
-    console.log(
-      "TWILIO ERROR:",
-      error.response?.data || error.message
-    );
-
-    throw error;
-  }
-}
-
-
-/*
-==============================
-CREATE CUSTOMER ROUTE
-==============================
-*/
-
 app.post("/new-customer", async (req, res) => {
-
   try {
+    console.log("Incoming payload:", req.body);
 
     let { name, phone, client_id } = req.body;
 
-    console.log("REQUEST BODY:", req.body);
-
+    /*
+    CLEAN INPUT
+    */
+    client_id = String(client_id).trim();
 
     /*
-    STEP 1: VALIDATE CLIENT EXISTS
+    VALIDATE UUID FORMAT
     */
-
-    const { data: clientExists, error: clientError } =
-      await supabase
-        .from("clients")
-        .select("id")
-        .eq("id", client_id)
-        .single();
-
-    if (clientError || !clientExists) {
-
-      console.log("CLIENT VALIDATION FAILED:", clientError);
-
+    if (!isUUID(client_id)) {
       return res.status(400).json({
-        success: false,
-        message: "Invalid client_id"
+        error: "Invalid UUID format",
+        received: client_id
       });
     }
 
-
     /*
-    STEP 2: INSERT CUSTOMER
+    INSERT CUSTOMER
     */
-
-    const { data, error } =
-      await supabase
-        .from("customers")
-        .insert([
-          {
-            name,
-            phone,
-            client_id
-          }
-        ])
-        .select()
-        .single();
-
+    const { data, error } = await supabase
+      .from("customers")
+      .insert([
+        {
+          name,
+          phone,
+          client_id
+        }
+      ])
+      .select()
+      .single();
 
     if (error) {
-
-      console.log("SUPABASE INSERT ERROR:", error);
-
-      return res.status(500).json({
-        success: false,
-        error
-      });
+      console.error("Supabase insert error:", error);
+      return res.status(500).json(error);
     }
 
-
     /*
-    STEP 3: SEND WHATSAPP MESSAGE
+    SEND WHATSAPP MESSAGE
     */
-
-    await sendWhatsAppMessage(
-      phone,
-      "Hi! Thank you for visiting us. Please rate your experience from 1 to 5."
-    );
-
+    await client.messages.create({
+      from: process.env.TWILIO_WHATSAPP_NUMBER,
+      to: phone,
+      body:
+        "Hi! We'd love your feedback.\nPlease rate us:\n1⭐ 2⭐ 3⭐ 4⭐ 5⭐"
+    });
 
     return res.json({
       success: true,
       customer: data
     });
 
-  }
-
-  catch (err) {
-
-    console.log("SERVER ERROR:", err);
-
+  } catch (err) {
+    console.error("Server error:", err);
     return res.status(500).json({
-      success: false
+      error: "Internal server error",
+      details: err.message
     });
-
   }
-
 });
 
-
 /*
-==============================
-SERVER START
-==============================
+START SERVER
 */
-
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log("Server running on port", PORT);
 });
